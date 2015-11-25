@@ -184,7 +184,6 @@ func (m *manager) workers(lim int) {
 	defer func() {
 		// Before closing, wait for all workers to finish
 		wg.Done()
-		fmt.Println("DONE!")
 		close(m.last)
 	}()
 
@@ -216,7 +215,6 @@ func (m *manager) workers(lim int) {
 
 	select {
 	case <-m.closing:
-		fmt.Println("returned")
 		return
 	}
 
