@@ -1,8 +1,11 @@
 package main
 
 import (
+	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -37,7 +40,7 @@ func (w *work) Do() Result {
 		return Result{err: err}
 	}
 	// bs, _ := ioutil.ReadAll(resp.Body)
-	// fmt.Println(string(bs))
+	// fmt.Println("found:", string(bs))
 	defer resp.Body.Close()
 
 	return Result{
@@ -123,9 +126,19 @@ func (m *manager) collect() {
 	for {
 		select {
 		case r := <-m.fin:
-			results = append(results, r)
-		case r := <-m.err:
-			errs = append(errs, r)
+			if r.err == nil && r.clen == 0 {
+				r.err = errors.New("empty response")
+			}
+
+			if r.err != nil {
+				errs = append(errs, r)
+				if len(errs) > 100 && len(errs) > len(results) {
+					sortErrors(errs)
+					log.Fatal("Exited early: more errors than successes from API")
+				}
+			} else {
+				results = append(results, r)
+			}
 		case <-m.last:
 			m.res = results
 			m.errres = errs
@@ -141,12 +154,17 @@ func (m *manager) load(ep string) error {
 		// Practicie request, if it fails do nothing
 		return err
 	}
+	cli := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
 	for {
 		// Requests can't be reused, add one to each worker
 		req, _ := http.NewRequest("GET", ep, nil)
 		w := work{
 			req: req,
-			cli: http.DefaultClient,
+			cli: cli,
 		}
 		select {
 		case <-m.closing:
@@ -187,12 +205,7 @@ func (m *manager) workers(lim int) {
 					mu.Lock()
 					cur = cur - 1
 					mu.Unlock()
-
-					if res.err == nil {
-						m.fin <- res
-					} else {
-						m.err <- res
-					}
+					m.fin <- res
 					wg.Done()
 					c.Signal()
 				}()
